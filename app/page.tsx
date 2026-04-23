@@ -3,7 +3,7 @@ import { useEffect, useState, CSSProperties } from 'react'
 import { supabase } from '../lib/supabase'
 
 interface Order {
-  inv: string; type: string; cust: string; custPhone: string; custNotes: string;
+  inv: string; type: string; cust: string; custPhone: string; custNotes: string; custAddr: string;
   pay: string; mthd: string; vatMode: string; notes: string;
   cashAmt: string; cardAmt: string; bankAmt: string;
   lines: Line[]; opts: Record<number, any>; msg: string; busy: boolean; open: boolean;
@@ -85,7 +85,11 @@ export default function App() {
 
   function makeLine(): Line { return {style:'',colour:'',from:'',boxes:'',price:'',vat:'20',styleSugg:[],showSugg:false} }
   function makeOrder(n: string): Order {
-    return {inv:n,type:'OUT',cust:'',custPhone:'',custNotes:'',pay:'Paid',mthd:'Cash',vatMode:'all20',notes:'',cashAmt:'',cardAmt:'',bankAmt:'',lines:[makeLine()],opts:{},msg:'',busy:false,open:true,showCustDrop:false}
+    return {inv:n,type:'OUT',cust:'',custPhone:'',custNotes:'',custAddr:'',pay:'Paid',mthd:'Cash',vatMode:'all20',notes:'',cashAmt:'',cardAmt:'',bankAmt:'',lines:[makeLine()],opts:{},msg:'',busy:false,open:true,showCustDrop:false}
+  }
+
+  function isNewCust(o: Order): boolean {
+    return o.cust.length>=2 && !allCusts.find((c: any)=>c.name?.toLowerCase()===o.cust.toLowerCase())
   }
 
   useEffect(()=>{
@@ -113,68 +117,31 @@ export default function App() {
   }
 
   function buildPayStr(o: Order): string {
-    if(o.pay==='Mixed'){
-      const parts: string[]=[]
-      if(parseFloat(o.cashAmt)>0)parts.push('Cash £'+o.cashAmt)
-      if(parseFloat(o.cardAmt)>0)parts.push('Card £'+o.cardAmt)
-      if(parseFloat(o.bankAmt)>0)parts.push('Bank £'+o.bankAmt)
-      return 'Mixed ('+parts.join(' + ')+')'
-    }
+    if(o.pay==='Mixed'){const p: string[]=[];if(parseFloat(o.cashAmt)>0)p.push('Cash £'+o.cashAmt);if(parseFloat(o.cardAmt)>0)p.push('Card £'+o.cardAmt);if(parseFloat(o.bankAmt)>0)p.push('Bank £'+o.bankAmt);return'Mixed ('+p.join(' + ')+')'}
     return o.pay+(o.mthd&&o.mthd!=='N/A'?' ('+o.mthd+')':'')
   }
+  function calcLineTotals(o: Order){let sub=0,vt=0;o.lines.forEach((l: Line)=>{const lt=(parseInt(l.boxes)||0)*12*(parseFloat(l.price)||0);sub+=lt;vt+=lt*(parseFloat(l.vat)||0)/100});return{sub,vatTotal:vt,total:sub+vt}}
 
-  function calcLineTotals(o: Order) {
-    let sub=0, vatTotal=0
-    o.lines.forEach((l: Line)=>{
-      const lineTotal=(parseInt(l.boxes)||0)*12*(parseFloat(l.price)||0)
-      const lineVat=parseFloat(l.vat)||0
-      sub+=lineTotal
-      vatTotal+=lineTotal*lineVat/100
-    })
-    return {sub,vatTotal,total:sub+vatTotal}
-  }
-
-  // Customer autocomplete
   function custSuggestions(q: string): any[]{if(q.length<2)return[];return allCusts.filter((c: any)=>(c.name||'').toLowerCase().includes(q.toLowerCase())).slice(0,8)}
-  function selectCustForOrder(oi: number,c: any){updOrder(oi,{cust:c.name,custPhone:c.phone||'',custNotes:c.notes||'',showCustDrop:false})}
+  function selectCustForOrder(oi: number,c: any){updOrder(oi,{cust:c.name,custPhone:c.phone||'',custNotes:c.notes||'',custAddr:c.address||'',showCustDrop:false})}
 
-  // Style autocomplete
   async function searchStyleForLine(oi: number,li: number,q: string){
     updLine(oi,li,'style',q)
     if(q.length<2){updLineMeta(oi,li,{styleSugg:[],showSugg:false});return}
     const {data}=await supabase.rpc('search_styles',{p_query:q})
     updLineMeta(oi,li,{styleSugg:data||[],showSugg:true})
   }
-  function selectStyleForLine(oi: number,li: number,code: string){
-    updLine(oi,li,'style',code)
-    updLineMeta(oi,li,{showSugg:false})
-    styleBlur(oi,li,code)
-  }
-  function updLineMeta(oi: number,li: number,meta: any){
-    setOrders(p=>p.map((o,i)=>{if(i!==oi)return o;const nl=[...o.lines];nl[li]={...nl[li],...meta};return{...o,lines:nl}}))
-  }
+  function selectStyleForLine(oi: number,li: number,code: string){updLine(oi,li,'style',code);updLineMeta(oi,li,{showSugg:false});styleBlur(oi,li,code)}
+  function updLineMeta(oi: number,li: number,meta: any){setOrders(p=>p.map((o,i)=>{if(i!==oi)return o;const nl=[...o.lines];nl[li]={...nl[li],...meta};return{...o,lines:nl}}))}
 
   function updOrder(idx: number,ch: Partial<Order>){setOrders(p=>p.map((o,i)=>i===idx?{...o,...ch}:o))}
   function updLine(oi: number,li: number,f: string,v: string){setOrders(p=>p.map((o,i)=>{if(i!==oi)return o;const nl=[...o.lines];nl[li]={...nl[li],[f]:v};return{...o,lines:nl}}))}
-  function addLine(oi: number){setOrders(p=>p.map((o,i)=>{
-    if(i!==oi)return o
-    const newLine=makeLine()
-    newLine.vat=o.vatMode==='all20'?'20':o.vatMode==='all0'?'0':'20'
-    return{...o,lines:[...o.lines,newLine]}
-  }))}
+  function addLine(oi: number){setOrders(p=>p.map((o,i)=>{if(i!==oi)return o;const nl=makeLine();nl.vat=o.vatMode==='all20'?'20':o.vatMode==='all0'?'0':'20';return{...o,lines:[...o.lines,nl]}}))}
   function rmLine(oi: number,li: number){setOrders(p=>p.map((o,i)=>i===oi?{...o,lines:o.lines.filter((_: any,j: number)=>j!==li)}:o))}
   function addNewOrder(){const used=orders.map((o: Order)=>parseInt(o.inv)||0);const mx=Math.max(...used,parseInt(nextInv)||0);setOrders(p=>[...p,makeOrder(String(mx+1))])}
   function removeOrder(idx: number){if(orders.length<=1)return;setOrders(p=>p.filter((_: any,i: number)=>i!==idx))}
   function toggleOrder(idx: number){updOrder(idx,{open:!orders[idx].open})}
-
-  // VAT mode change updates all lines
-  function changeVatMode(oi: number, mode: string){
-    setOrders(p=>p.map((o,i)=>{
-      if(i!==oi)return o
-      const nl=o.lines.map((l: Line)=>({...l, vat:mode==='all20'?'20':mode==='all0'?'0':l.vat}))
-      return{...o,vatMode:mode,lines:nl}
-    }))
-  }
+  function changeVatMode(oi: number,mode: string){setOrders(p=>p.map((o,i)=>{if(i!==oi)return o;const nl=o.lines.map((l: Line)=>({...l,vat:mode==='all20'?'20':mode==='all0'?'0':l.vat}));return{...o,vatMode:mode,lines:nl}}))}
 
   async function styleBlur(oi: number,li: number,style: string){
     if(!style||style.length<2)return
@@ -189,26 +156,26 @@ export default function App() {
     const valid=o.lines.filter((l: Line)=>l.style&&parseInt(l.boxes)>0)
     if(!valid.length){updOrder(idx,{busy:false,msg:'Add lines with style + boxes'});return}
     if((o.type==='OUT'||o.type==='TBC')&&!o.cust){updOrder(idx,{busy:false,msg:'Enter customer name'});return}
-    const now=new Date().toISOString()
-    const payStr=buildPayStr(o)
-    const totals=calcLineTotals(o)
+    const now=new Date().toISOString(),payStr=buildPayStr(o),totals=calcLineTotals(o)
     let shopT=stats.shop;const errors: string[]=[]
     for(let i=0;i<valid.length;i++){
-      const Li=valid[i],bx=parseInt(Li.boxes)||0
-      const lineVat=parseFloat(Li.vat)||0
-      const priceNote=Li.price?'£'+Li.price+(lineVat>0?' +'+lineVat+'%VAT':''):''
-      if(Li.style.toUpperCase()==='DPD'){await supabase.from('stock log imported').insert({'DATE':now,'ORDER#':o.inv,'TYPE':o.type,'STYLE':Li.style,'COLOUR':Li.colour||'N/A','£/PAIR':priceNote,'QTY':-bx,'TO':o.cust,'CUSTOMER':o.cust,'PAYMENT':payStr,'NOTES':'#'+o.inv+' | '+bx+'bx | VAT:'+lineVat+'%'+(o.notes?' | '+o.notes:''),'SHOP TOTAL':shopT});continue}
+      const Li=valid[i],bx=parseInt(Li.boxes)||0,lv=parseFloat(Li.vat)||0,priceNote=Li.price?'£'+Li.price+(lv>0?' +'+lv+'%VAT':''):''
+      if(Li.style.toUpperCase()==='DPD'){await supabase.from('stock log imported').insert({'DATE':now,'ORDER#':o.inv,'TYPE':o.type,'STYLE':Li.style,'COLOUR':Li.colour||'N/A','£/PAIR':priceNote,'QTY':-bx,'TO':o.cust,'CUSTOMER':o.cust,'PAYMENT':payStr,'NOTES':'#'+o.inv+' | '+bx+'bx | VAT:'+lv+'%'+(o.notes?' | '+o.notes:''),'SHOP TOTAL':shopT});continue}
       if(o.type==='OUT'||o.type==='TBC'){
         const match=inv.find((r: any)=>r.style_code.toLowerCase()===Li.style.toLowerCase()&&r.colour.toLowerCase()===Li.colour.toLowerCase()&&r.location_id===Li.from)
         if(!match){errors.push(Li.style+' '+Li.colour+' not at '+Li.from);continue}
         if(match.boxes<bx){errors.push(Li.style+': only '+match.boxes+' at '+Li.from);continue}
         const nq=match.boxes-bx;await supabase.from('inventory').update({boxes:nq}).eq('id',match.id);match.boxes=nq;shopT-=bx
-        await supabase.from('stock log imported').insert({'DATE':now,'ORDER#':o.inv,'TYPE':o.type,'STYLE':Li.style,'COLOUR':Li.colour,'£/PAIR':priceNote,'QTY':-bx,'BEFORE':match.boxes+bx,'AFTER':nq,'FROM':Li.from,'TO':o.cust,'CUSTOMER':o.cust,'PAYMENT':payStr,'NOTES':'#'+o.inv+' | '+Li.style+' '+Li.colour+' | '+bx+'bx@'+Li.from+' | VAT:'+lineVat+'%'+(o.notes?' | '+o.notes:'')+(nq<=0?' | DEPLETED':''),'SHOP TOTAL':shopT})
+        await supabase.from('stock log imported').insert({'DATE':now,'ORDER#':o.inv,'TYPE':o.type,'STYLE':Li.style,'COLOUR':Li.colour,'£/PAIR':priceNote,'QTY':-bx,'BEFORE':match.boxes+bx,'AFTER':nq,'FROM':Li.from,'TO':o.cust,'CUSTOMER':o.cust,'PAYMENT':payStr,'NOTES':'#'+o.inv+' | '+Li.style+' '+Li.colour+' | '+bx+'bx@'+Li.from+' | VAT:'+lv+'%'+(o.notes?' | '+o.notes:'')+(nq<=0?' | DEPLETED':''),'SHOP TOTAL':shopT})
       } else if(o.type==='IN'){
         const match=inv.find((r: any)=>r.style_code.toLowerCase()===Li.style.toLowerCase()&&r.colour.toLowerCase()===Li.colour.toLowerCase()&&r.location_id===Li.from)
         if(match){const nq=match.boxes+bx;await supabase.from('inventory').update({boxes:nq}).eq('id',match.id);match.boxes=nq;shopT+=bx;await supabase.from('stock log imported').insert({'DATE':now,'ORDER#':o.inv,'TYPE':'IN','STYLE':Li.style,'COLOUR':Li.colour,'QTY':bx,'BEFORE':match.boxes-bx,'AFTER':nq,'TO':Li.from,'PAYMENT':'N/A','NOTES':'IN #'+o.inv+' | '+bx+'bx to '+Li.from,'SHOP TOTAL':shopT})}
         else{await supabase.from('inventory').insert({location_id:Li.from,style_code:Li.style.toLowerCase(),colour:Li.colour,boxes:bx});shopT+=bx;await supabase.from('stock log imported').insert({'DATE':now,'ORDER#':o.inv,'TYPE':'IN','STYLE':Li.style,'COLOUR':Li.colour,'QTY':bx,'BEFORE':0,'AFTER':bx,'TO':Li.from,'PAYMENT':'N/A','NOTES':'IN #'+o.inv+' | '+bx+'bx to '+Li.from+' (NEW)','SHOP TOTAL':shopT})}
       }
+    }
+    // Save new customer profile if new
+    if(o.cust&&isNewCust(o)&&(o.custPhone||o.custAddr)){
+      await supabase.from('customer_profiles').insert({name:o.cust,phone:o.custPhone,address:o.custAddr,description:o.custNotes})
     }
     if(o.cust&&valid.length>0&&!errors.length){
       const noteText='Order #'+o.inv+' | '+valid.length+'L, '+valid.reduce((s: number,l: Line)=>s+(parseInt(l.boxes)||0),0)+'bx | '+payStr+' | Sub:£'+totals.sub.toFixed(2)+' VAT:£'+totals.vatTotal.toFixed(2)+' Total:£'+totals.total.toFixed(2)+(o.notes?' | '+o.notes:'')
@@ -226,47 +193,28 @@ export default function App() {
   async function saveLogEdit(le: any){
     if(!le.id){setEditingLog(null);return}
     const oldType=logs.find((l: any)=>l.id===le.id)?.type
-    // If changing from CANCELLED back to OUT/TBC, need to deduct stock again
     if(oldType==='CANCELLED'&&(le.type==='OUT'||le.type==='TBC')){
-      const absQty=Math.abs(le.qty||0)
-      if(absQty>0&&le.from_loc&&le.style_code){
-        const {data:match}=await supabase.from('inventory').select('*').eq('location_id',le.from_loc).ilike('style_code',le.style_code).ilike('colour',le.colour||'').limit(1)
-        if(match&&match.length>0){
-          const newQty=match[0].boxes-absQty
-          if(newQty<0){alert('Not enough stock at '+le.from_loc+' (only '+match[0].boxes+')');return}
-          await supabase.from('inventory').update({boxes:newQty}).eq('id',match[0].id)
-        }
-      }
+      const aq=Math.abs(le.qty||0);if(aq>0&&le.from_loc&&le.style_code){const {data:match}=await supabase.from('inventory').select('*').eq('location_id',le.from_loc).ilike('style_code',le.style_code).ilike('colour',le.colour||'').limit(1);if(match&&match.length>0){if(match[0].boxes<aq){alert('Not enough stock at '+le.from_loc);return};await supabase.from('inventory').update({boxes:match[0].boxes-aq}).eq('id',match[0].id)}}
     }
-    // If changing from OUT/TBC to CANCELLED, restore stock
     if((oldType==='OUT'||oldType==='TBC')&&le.type==='CANCELLED'){
-      const absQty=Math.abs(le.qty||0)
-      if(absQty>0&&le.from_loc&&le.style_code){
-        const {data:match}=await supabase.from('inventory').select('*').eq('location_id',le.from_loc).ilike('style_code',le.style_code).ilike('colour',le.colour||'').limit(1)
-        if(match&&match.length>0){await supabase.from('inventory').update({boxes:match[0].boxes+absQty}).eq('id',match[0].id)}
-      }
+      const aq=Math.abs(le.qty||0);if(aq>0&&le.from_loc&&le.style_code){const {data:match}=await supabase.from('inventory').select('*').eq('location_id',le.from_loc).ilike('style_code',le.style_code).ilike('colour',le.colour||'').limit(1);if(match&&match.length>0){await supabase.from('inventory').update({boxes:match[0].boxes+aq}).eq('id',match[0].id)}}
     }
     await supabase.from('stock log imported').update({'TYPE':le.type,'STYLE':le.style_code,'COLOUR':le.colour,'QTY':le.qty,'PAYMENT':le.payment,'NOTES':le.notes,'CUSTOMER':le.customer}).eq('id',le.id)
     setEditingLog(null);loadLog();load()
   }
 
   async function cancelLogEntry(le: any){
-    if(!le.id)return
-    if(!confirm('Cancel #'+le.order_num+' ('+le.style_code+' '+le.colour+')?\nRestore '+Math.abs(le.qty||0)+'bx to '+le.from_loc+'?'))return
-    const absQty=Math.abs(le.qty||0)
-    if(absQty>0&&(le.type==='OUT'||le.type==='TBC')&&le.from_loc&&le.style_code){
-      const {data:match}=await supabase.from('inventory').select('*').eq('location_id',le.from_loc).ilike('style_code',le.style_code).ilike('colour',le.colour||'').limit(1)
-      if(match&&match.length>0){await supabase.from('inventory').update({boxes:match[0].boxes+absQty}).eq('id',match[0].id)}
-    }
-    await supabase.from('stock log imported').update({'TYPE':'CANCELLED','NOTES':(le.notes||'')+' | CANCELLED '+new Date().toLocaleString('en-GB')+' | Restored:'+absQty+'bx→'+(le.from_loc||'?')}).eq('id',le.id)
+    if(!le.id||!confirm('Cancel #'+le.order_num+' ('+le.style_code+' '+le.colour+')?\nRestore '+Math.abs(le.qty||0)+'bx to '+le.from_loc+'?'))return
+    const aq=Math.abs(le.qty||0)
+    if(aq>0&&(le.type==='OUT'||le.type==='TBC')&&le.from_loc&&le.style_code){const {data:match}=await supabase.from('inventory').select('*').eq('location_id',le.from_loc).ilike('style_code',le.style_code).ilike('colour',le.colour||'').limit(1);if(match&&match.length>0){await supabase.from('inventory').update({boxes:match[0].boxes+aq}).eq('id',match[0].id)}}
+    await supabase.from('stock log imported').update({'TYPE':'CANCELLED','NOTES':(le.notes||'')+' | CANCELLED '+new Date().toLocaleString('en-GB')+' | Restored:'+aq+'bx→'+(le.from_loc||'?')}).eq('id',le.id)
     setEditingLog(null);setExpandedLog(null);loadLog();load()
   }
 
   async function openProfile(name: string){
     const cust=allCusts.find((c: any)=>c.name===name)
     const {data:prof}=await supabase.from('customer_profiles').select('*').eq('name',name).single()
-    if(prof){setCustProfile(prof);setEditingProfile({...prof})}
-    else{const np={name,company:cust?.company||'',address:cust?.address||'',phone:cust?.phone||'',description:cust?.notes||''};setCustProfile(np);setEditingProfile({...np})}
+    if(prof){setCustProfile(prof);setEditingProfile({...prof})}else{const np={name,company:cust?.company||'',address:cust?.address||'',phone:cust?.phone||'',description:cust?.notes||''};setCustProfile(np);setEditingProfile({...np})}
     const {data:notes}=await supabase.from('customer_notes').select('*').eq('customer_name',name).order('created_at',{ascending:false});setCustNotes(notes||[])
     const {data:fu}=await supabase.from('customer_followups').select('*').eq('customer_name',name).order('due_date',{ascending:true});setCustFollowups(fu||[])
     const {data:ord}=await supabase.from('stock_log').select('*').ilike('customer','%'+name+'%').order('created_at',{ascending:false}).limit(100);setCustOrders(ord||[])
@@ -275,16 +223,14 @@ export default function App() {
   async function saveProfile(){if(!editingProfile)return;if(editingProfile.id){await supabase.from('customer_profiles').update({name:editingProfile.name,company:editingProfile.company,address:editingProfile.address,phone:editingProfile.phone,description:editingProfile.description,updated_at:new Date().toISOString()}).eq('id',editingProfile.id)}else{await supabase.from('customer_profiles').insert({name:editingProfile.name,company:editingProfile.company,address:editingProfile.address,phone:editingProfile.phone,description:editingProfile.description})};setCustProfile(editingProfile)}
   async function addNote(){if(!newNote.trim()||!custProfile)return;await supabase.from('customer_notes').insert({customer_name:custProfile.name,note:newNote});setNewNote('');const {data}=await supabase.from('customer_notes').select('*').eq('customer_name',custProfile.name).order('created_at',{ascending:false});setCustNotes(data||[])}
   async function addFollowup(){if(!newFollowup.title||!custProfile)return;await supabase.from('customer_followups').insert({customer_name:custProfile.name,...newFollowup});setNewFollowup({title:'',details:'',due_date:'',priority:'Normal',category:'Phone Call'});setShowAddFollowup(false);const {data}=await supabase.from('customer_followups').select('*').eq('customer_name',custProfile.name).order('due_date',{ascending:true});setCustFollowups(data||[]);const {data:fu}=await supabase.from('customer_followups').select('*').eq('completed',false).order('due_date',{ascending:true});setAllFollowups(fu||[])}
-  async function toggleFollowup(id: number,completed: boolean){await supabase.from('customer_followups').update({completed:!completed,completed_at:!completed?new Date().toISOString():null}).eq('id',id);const {data}=await supabase.from('customer_followups').select('*').eq('customer_name',custProfile.name).order('due_date',{ascending:true});setCustFollowups(data||[]);const {data:fu}=await supabase.from('customer_followups').select('*').eq('completed',false).order('due_date',{ascending:true});setAllFollowups(fu||[])}
+  async function toggleFollowup(id: number,done: boolean){await supabase.from('customer_followups').update({completed:!done,completed_at:!done?new Date().toISOString():null}).eq('id',id);const {data}=await supabase.from('customer_followups').select('*').eq('customer_name',custProfile.name).order('due_date',{ascending:true});setCustFollowups(data||[]);const {data:fu}=await supabase.from('customer_followups').select('*').eq('completed',false).order('due_date',{ascending:true});setAllFollowups(fu||[])}
   async function deleteFollowup(id: number){await supabase.from('customer_followups').delete().eq('id',id);const {data}=await supabase.from('customer_followups').select('*').eq('customer_name',custProfile.name).order('due_date',{ascending:true});setCustFollowups(data||[])}
   async function deleteNote(id: number){await supabase.from('customer_notes').delete().eq('id',id);const {data}=await supabase.from('customer_notes').select('*').eq('customer_name',custProfile.name).order('created_at',{ascending:false});setCustNotes(data||[])}
-
   async function loadMaster(){const {data}=await supabase.from('inventory').select('*').order('location_id');setMasterInv(data||[])}
   async function saveMasterEdit(item: any){await supabase.from('inventory').update({location_id:item.location_id,style_code:item.style_code,colour:item.colour,boxes:parseInt(item.boxes)||0}).eq('id',item.id);await supabase.from('audit_log').insert({action:'EDIT',table_name:'inventory',record_id:String(item.id),old_data:masterInv.find((r: any)=>r.id===item.id),new_data:item,user_email:user?.email});setMasterEdit(null);loadMaster();load()}
   async function addMasterItem(){if(!newItem.location_id||!newItem.style_code)return;const {data}=await supabase.from('inventory').insert({location_id:newItem.location_id,style_code:newItem.style_code.toLowerCase(),colour:newItem.colour,boxes:parseInt(newItem.boxes)||0}).select();if(data)await supabase.from('audit_log').insert({action:'ADD',table_name:'inventory',record_id:String(data[0]?.id),new_data:data[0],user_email:user?.email});setNewItem({location_id:'',style_code:'',colour:'',boxes:''});setMasterAdd(false);loadMaster();load()}
   async function deleteMasterItem(item: any){if(!confirm('Delete '+item.style_code+'?'))return;await supabase.from('inventory').delete().eq('id',item.id);await supabase.from('audit_log').insert({action:'DELETE',table_name:'inventory',record_id:String(item.id),old_data:item,user_email:user?.email});loadMaster();load()}
   async function loadAudit(){const {data}=await supabase.from('audit_log').select('*').order('created_at',{ascending:false}).limit(200);setAuditLogs(data||[])}
-
   function sw(t: string){setTab(t);if(t==='log')loadLog();if(t==='master'){loadMaster();loadAudit()}}
 
   const filteredMaster=masterInv.filter((r: any)=>{const q=masterFilter.toLowerCase();return(!masterLoc||r.location_id===masterLoc)&&(!q||r.style_code?.toLowerCase().includes(q)||r.colour?.toLowerCase().includes(q)||r.location_id?.toLowerCase().includes(q))})
@@ -329,9 +275,7 @@ export default function App() {
               <h2 style={{fontSize:18,fontWeight:600,margin:0}}>Order Entry</h2>
               <button onClick={addNewOrder} style={{background:'#111',color:'white',border:'none',padding:'7px 18px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:12}}>+ New Order</button>
             </div>
-            {orders.map((o,oi)=>{
-              const totals=calcLineTotals(o)
-              return(
+            {orders.map((o,oi)=>{const totals=calcLineTotals(o);return(
               <div key={oi} style={{background:'white',borderRadius:8,padding:18,marginBottom:12,border:o.msg&&!o.msg.startsWith('Error')?'2px solid #2e7d32':'1px solid #e0e0e0'}}>
                 <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={()=>toggleOrder(oi)}>
                   <span style={{fontSize:16,fontWeight:700}}>#{o.inv}</span>
@@ -342,108 +286,69 @@ export default function App() {
                   {orders.length>1&&<button onClick={(e: any)=>{e.stopPropagation();removeOrder(oi)}} style={{background:'none',border:'none',color:'#c62828',cursor:'pointer',fontSize:14}}>×</button>}
                 </div>
                 {o.msg&&<div style={{marginTop:8,padding:8,borderRadius:6,background:o.msg.startsWith('Error')?'#ffebee':'#e8f5e9',color:o.msg.startsWith('Error')?'#c62828':'#2e7d32',fontSize:12}}>{o.msg}</div>}
-                {o.open&&(
-                  <div style={{marginTop:14}}>
-                    {/* Row 1: Inv, Type, Customer, Payment, VAT Mode */}
-                    <div style={{display:'grid',gridTemplateColumns:'70px 70px 1fr 85px 100px',gap:8,marginBottom:10}}>
-                      <div><label style={Lbl}>Inv #</label><input style={{...I,fontWeight:700,fontSize:15,textAlign:'center'}} value={o.inv} onChange={(e: any)=>updOrder(oi,{inv:e.target.value})}/></div>
-                      <div><label style={Lbl}>Type</label><select style={I} value={o.type} onChange={(e: any)=>updOrder(oi,{type:e.target.value})}>{['OUT','IN','TBC'].map(t=><option key={t}>{t}</option>)}</select></div>
-                      <div style={{position:'relative'}}>
-                        <label style={Lbl}>Customer</label>
-                        <input style={{...I,fontSize:14}} value={o.cust}
-                          onChange={(e: any)=>updOrder(oi,{cust:e.target.value,showCustDrop:true})}
-                          onFocus={()=>updOrder(oi,{showCustDrop:true})}
-                          placeholder="Customer name..."/>
-                        {o.showCustDrop&&o.cust.length>=2&&custSuggestions(o.cust).length>0&&(
-                          <div style={{position:'absolute',top:'100%',left:0,right:0,background:'white',border:'1px solid #ddd',borderRadius:6,boxShadow:'0 4px 12px rgba(0,0,0,0.1)',zIndex:50,maxHeight:160,overflowY:'auto'}}>
-                            {custSuggestions(o.cust).map((c: any,ci: number)=>(
-                              <div key={ci} onMouseDown={(e: any)=>{e.preventDefault();selectCustForOrder(oi,c)}} style={{padding:'6px 10px',cursor:'pointer',borderBottom:'1px solid #f5f5f5',fontSize:12}}>
-                                <div style={{fontWeight:600}}>{c.name}</div>
-                                <div style={{fontSize:10,color:'#888'}}>{c.phone||''}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div><label style={Lbl}>Payment</label><select style={I} value={o.pay} onChange={(e: any)=>updOrder(oi,{pay:e.target.value})}>{['Paid','Unpaid','Partial','TBC','Mixed'].map(p=><option key={p}>{p}</option>)}</select></div>
-                      <div><label style={Lbl}>VAT</label><select style={I} value={o.vatMode} onChange={(e: any)=>changeVatMode(oi,e.target.value)}>
-                        <option value="all0">All Zero</option>
-                        <option value="all20">All UK Std</option>
-                        <option value="mixed">Mixed</option>
-                      </select></div>
+                {o.open&&(<div style={{marginTop:14}}>
+                  <div style={{display:'grid',gridTemplateColumns:'70px 70px 1fr 85px 100px',gap:8,marginBottom:10}}>
+                    <div><label style={Lbl}>Inv #</label><input style={{...I,fontWeight:700,fontSize:15,textAlign:'center'}} value={o.inv} onChange={(e: any)=>updOrder(oi,{inv:e.target.value})}/></div>
+                    <div><label style={Lbl}>Type</label><select style={I} value={o.type} onChange={(e: any)=>updOrder(oi,{type:e.target.value})}>{['OUT','IN','TBC'].map(t=><option key={t}>{t}</option>)}</select></div>
+                    <div style={{position:'relative'}}><label style={Lbl}>Customer</label><input style={{...I,fontSize:14}} value={o.cust} onChange={(e: any)=>updOrder(oi,{cust:e.target.value,showCustDrop:true})} onFocus={()=>updOrder(oi,{showCustDrop:true})} placeholder="Customer name..."/>
+                      {o.showCustDrop&&o.cust.length>=2&&custSuggestions(o.cust).length>0&&(<div style={{position:'absolute',top:'100%',left:0,right:0,background:'white',border:'1px solid #ddd',borderRadius:6,boxShadow:'0 4px 12px rgba(0,0,0,0.1)',zIndex:50,maxHeight:160,overflowY:'auto'}}>{custSuggestions(o.cust).map((c: any,ci: number)=>(<div key={ci} onMouseDown={(e: any)=>{e.preventDefault();selectCustForOrder(oi,c)}} style={{padding:'6px 10px',cursor:'pointer',borderBottom:'1px solid #f5f5f5',fontSize:12}}><div style={{fontWeight:600}}>{c.name}</div><div style={{fontSize:10,color:'#888'}}>{c.phone||''}</div></div>))}</div>)}
                     </div>
-                    {/* Row 2: Method or Split + Phone + Notes */}
-                    {o.pay!=='Mixed'?(
-                      <div style={{display:'grid',gridTemplateColumns:'100px 140px 1fr',gap:8,marginBottom:10}}>
-                        <div><label style={Lbl}>Method</label><select style={I} value={o.mthd} onChange={(e: any)=>updOrder(oi,{mthd:e.target.value})}>{['Cash','Card','Bank','N/A'].map(m=><option key={m}>{m}</option>)}</select></div>
-                        <div><label style={Lbl}>Phone</label><input style={I} value={o.custPhone} onChange={(e: any)=>updOrder(oi,{custPhone:e.target.value})} placeholder="Phone..."/></div>
-                        <div><label style={Lbl}>Order Notes</label><input style={I} value={o.notes} onChange={(e: any)=>updOrder(oi,{notes:e.target.value})} placeholder="Order notes..."/></div>
-                      </div>
-                    ):(
-                      <div style={{marginBottom:10}}>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:6}}>
-                          <div><label style={{fontSize:9,color:'#888'}}>Cash £</label><input type="number" style={I} value={o.cashAmt} onChange={(e: any)=>updOrder(oi,{cashAmt:e.target.value})} placeholder="0.00"/></div>
-                          <div><label style={{fontSize:9,color:'#888'}}>Card £</label><input type="number" style={I} value={o.cardAmt} onChange={(e: any)=>updOrder(oi,{cardAmt:e.target.value})} placeholder="0.00"/></div>
-                          <div><label style={{fontSize:9,color:'#888'}}>Bank £</label><input type="number" style={I} value={o.bankAmt} onChange={(e: any)=>updOrder(oi,{bankAmt:e.target.value})} placeholder="0.00"/></div>
-                          <div><label style={{fontSize:9,color:'#888'}}>Notes</label><input style={I} value={o.notes} onChange={(e: any)=>updOrder(oi,{notes:e.target.value})} placeholder="Notes"/></div>
-                        </div>
-                        <div style={{fontSize:11,color:'#555'}}>Split total: £{((parseFloat(o.cashAmt)||0)+(parseFloat(o.cardAmt)||0)+(parseFloat(o.bankAmt)||0)).toFixed(2)}</div>
-                      </div>
-                    )}
-                    {/* Lines */}
-                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{textAlign:'left',borderBottom:'2px solid #eee'}}>
-                      <th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:24}}>#</th>
-                      <th style={{padding:'6px 4px',color:'#999',fontWeight:600}}>Style</th>
-                      <th style={{padding:'6px 4px',color:'#999',fontWeight:600}}>Colour</th>
-                      <th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:55}}>Loc</th>
-                      <th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:50}}>Boxes</th>
-                      <th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:55}}>£/pr</th>
-                      {o.vatMode==='mixed'&&<th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:50}}>VAT</th>}
-                      <th style={{padding:'6px 4px',width:24}}></th>
-                    </tr></thead><tbody>
-                      {o.lines.map((Li: Line,li: number)=>(<tr key={li} style={{borderBottom:'1px solid #f5f5f5'}}>
-                        <td style={{padding:4,color:'#ccc',fontSize:11}}>{li+1}</td>
-                        <td style={{padding:4,position:'relative'}}>
-                          <input style={{...I,fontWeight:600}} value={Li.style}
-                            onChange={(e: any)=>searchStyleForLine(oi,li,e.target.value)}
-                            onBlur={()=>setTimeout(()=>updLineMeta(oi,li,{showSugg:false}),200)}
-                            placeholder="style code"/>
-                          {Li.showSugg&&Li.styleSugg.length>0&&(
-                            <div style={{position:'absolute',top:'100%',left:0,right:0,background:'white',border:'1px solid #ddd',borderRadius:6,boxShadow:'0 4px 12px rgba(0,0,0,0.1)',zIndex:50,maxHeight:150,overflowY:'auto'}}>
-                              {Li.styleSugg.map((s: any,si: number)=>(
-                                <div key={si} onMouseDown={(e: any)=>{e.preventDefault();selectStyleForLine(oi,li,s.style_code)}} style={{padding:'5px 10px',cursor:'pointer',borderBottom:'1px solid #f5f5f5',fontSize:12,display:'flex',justifyContent:'space-between'}}>
-                                  <b>{s.style_code}</b>
-                                  <span style={{color:'#888',fontSize:10}}>{s.total_boxes}bx @ {s.location_count}loc</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                        <td style={{padding:4}}>{o.opts[li]?.colours?.length>0?<select style={I} value={Li.colour} onChange={(e: any)=>updLine(oi,li,'colour',e.target.value)}><option value="">Pick...</option>{o.opts[li].colours.map((c: string)=><option key={c}>{c}</option>)}</select>:<input style={I} value={Li.colour} onChange={(e: any)=>updLine(oi,li,'colour',e.target.value)} placeholder="colour"/>}</td>
-                        <td style={{padding:4}}>{o.opts[li]?.shop_locations?.length>0?<select style={{...I,fontSize:11}} value={Li.from} onChange={(e: any)=>updLine(oi,li,'from',e.target.value)}><option value="">-</option>{o.opts[li].shop_locations.map((l: string)=><option key={l}>{l}</option>)}</select>:<input style={{...I,fontSize:11}} value={Li.from} onChange={(e: any)=>updLine(oi,li,'from',e.target.value)} placeholder="loc"/>}</td>
-                        <td style={{padding:4}}><input type="number" style={{...I,textAlign:'center',fontWeight:700,fontSize:14}} value={Li.boxes} onChange={(e: any)=>updLine(oi,li,'boxes',e.target.value)}/></td>
-                        <td style={{padding:4}}><input type="number" step="0.5" style={I} value={Li.price} onChange={(e: any)=>updLine(oi,li,'price',e.target.value)} placeholder="0.00"/></td>
-                        {o.vatMode==='mixed'&&<td style={{padding:4}}><select style={{...I,fontSize:11}} value={Li.vat} onChange={(e: any)=>updLine(oi,li,'vat',e.target.value)}><option value="0">0%</option><option value="20">20%</option></select></td>}
-                        <td style={{padding:4}}><button onClick={()=>rmLine(oi,li)} style={{background:'none',border:'none',color:'#ccc',cursor:'pointer',fontSize:14}}>×</button></td>
-                      </tr>))}
-                    </tbody></table>
-                    {/* Totals */}
-                    {o.lines.some((l: Line)=>l.price&&l.boxes)&&(
-                      <div style={{marginTop:8,padding:'10px 12px',background:'#fafafa',borderRadius:6,fontSize:12,color:'#555'}}>
-                        <div style={{display:'flex',gap:24}}>
-                          <span>Subtotal: <b>£{totals.sub.toFixed(2)}</b></span>
-                          <span>VAT: <b>£{totals.vatTotal.toFixed(2)}</b></span>
-                          <span style={{fontWeight:700,color:'#111',fontSize:14}}>Total: £{totals.total.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    )}
-                    <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
-                      <button onClick={()=>addLine(oi)} style={{color:'white',background:'#333',border:'none',padding:'7px 14px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:11}}>+ Line</button>
-                      <button onClick={()=>submitOrder(oi)} disabled={o.busy} style={{color:'white',background:o.busy?'#999':'#e2725b',border:'none',padding:'9px 24px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:700}}>{o.busy?'Processing...':'Submit Order'}</button>
-                      <div style={{marginLeft:'auto',fontSize:12,color:'#888'}}>{o.lines.filter((l: Line)=>l.style).length} lines | {o.lines.reduce((s: number,l: Line)=>s+(parseInt(l.boxes)||0),0)} boxes</div>
-                    </div>
+                    <div><label style={Lbl}>Payment</label><select style={I} value={o.pay} onChange={(e: any)=>updOrder(oi,{pay:e.target.value})}>{['Paid','Unpaid','Partial','TBC','Mixed'].map(p=><option key={p}>{p}</option>)}</select></div>
+                    <div><label style={Lbl}>VAT</label><select style={I} value={o.vatMode} onChange={(e: any)=>changeVatMode(oi,e.target.value)}><option value="all0">All Zero</option><option value="all20">All UK Std</option><option value="mixed">Mixed</option></select></div>
                   </div>
-                )}
+                  {/* New customer banner */}
+                  {isNewCust(o)&&(<div style={{background:'#f0f7ff',borderRadius:6,padding:10,marginBottom:10,border:'1px solid #bbdefb'}}>
+                    <div style={{fontSize:10,fontWeight:600,color:'#1565c0',marginBottom:6}}>NEW CUSTOMER — Add details</div>
+                    <div style={{display:'grid',gridTemplateColumns:'150px 1fr 1fr',gap:8}}>
+                      <div><label style={{fontSize:9,color:'#888'}}>Phone</label><input style={I} value={o.custPhone} onChange={(e: any)=>updOrder(oi,{custPhone:e.target.value})} placeholder="Phone number..."/></div>
+                      <div><label style={{fontSize:9,color:'#888'}}>Address</label><input style={I} value={o.custAddr} onChange={(e: any)=>updOrder(oi,{custAddr:e.target.value})} placeholder="Address..."/></div>
+                      <div><label style={{fontSize:9,color:'#888'}}>Notes</label><input style={I} value={o.custNotes} onChange={(e: any)=>updOrder(oi,{custNotes:e.target.value})} placeholder="Customer notes..."/></div>
+                    </div>
+                  </div>)}
+                  {/* Payment row */}
+                  {o.pay!=='Mixed'?(
+                    <div style={{display:'grid',gridTemplateColumns:'100px 1fr',gap:8,marginBottom:10}}>
+                      <div><label style={Lbl}>Method</label><select style={I} value={o.mthd} onChange={(e: any)=>updOrder(oi,{mthd:e.target.value})}>{['Cash','Card','Bank','N/A'].map(m=><option key={m}>{m}</option>)}</select></div>
+                      <div><label style={Lbl}>Order Notes</label><input style={I} value={o.notes} onChange={(e: any)=>updOrder(oi,{notes:e.target.value})} placeholder="Order notes..."/></div>
+                    </div>
+                  ):(
+                    <div style={{marginBottom:10}}>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:6}}>
+                        <div><label style={{fontSize:9,color:'#888'}}>Cash £</label><input type="number" style={I} value={o.cashAmt} onChange={(e: any)=>updOrder(oi,{cashAmt:e.target.value})} placeholder="0.00"/></div>
+                        <div><label style={{fontSize:9,color:'#888'}}>Card £</label><input type="number" style={I} value={o.cardAmt} onChange={(e: any)=>updOrder(oi,{cardAmt:e.target.value})} placeholder="0.00"/></div>
+                        <div><label style={{fontSize:9,color:'#888'}}>Bank £</label><input type="number" style={I} value={o.bankAmt} onChange={(e: any)=>updOrder(oi,{bankAmt:e.target.value})} placeholder="0.00"/></div>
+                        <div><label style={{fontSize:9,color:'#888'}}>Notes</label><input style={I} value={o.notes} onChange={(e: any)=>updOrder(oi,{notes:e.target.value})} placeholder="Notes"/></div>
+                      </div>
+                      <div style={{fontSize:11,color:'#555'}}>Split: £{((parseFloat(o.cashAmt)||0)+(parseFloat(o.cardAmt)||0)+(parseFloat(o.bankAmt)||0)).toFixed(2)}</div>
+                    </div>
+                  )}
+                  {/* Lines table — VAT column always visible */}
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{textAlign:'left',borderBottom:'2px solid #eee'}}>
+                    <th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:24}}>#</th><th style={{padding:'6px 4px',color:'#999',fontWeight:600}}>Style</th><th style={{padding:'6px 4px',color:'#999',fontWeight:600}}>Colour</th><th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:55}}>Loc</th><th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:50}}>Boxes</th><th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:55}}>£/pr</th><th style={{padding:'6px 4px',color:'#999',fontWeight:600,width:50}}>VAT</th><th style={{padding:'6px 4px',width:24}}></th>
+                  </tr></thead><tbody>
+                    {o.lines.map((Li: Line,li: number)=>(<tr key={li} style={{borderBottom:'1px solid #f5f5f5'}}>
+                      <td style={{padding:4,color:'#ccc',fontSize:11}}>{li+1}</td>
+                      <td style={{padding:4,position:'relative'}}>
+                        <input style={{...I,fontWeight:600}} value={Li.style} onChange={(e: any)=>searchStyleForLine(oi,li,e.target.value)} onBlur={()=>setTimeout(()=>updLineMeta(oi,li,{showSugg:false}),200)} placeholder="style code"/>
+                        {Li.showSugg&&Li.styleSugg.length>0&&(<div style={{position:'absolute',top:'100%',left:0,right:0,background:'white',border:'1px solid #ddd',borderRadius:6,boxShadow:'0 4px 12px rgba(0,0,0,0.1)',zIndex:50,maxHeight:150,overflowY:'auto'}}>{Li.styleSugg.map((s: any,si: number)=>(<div key={si} onMouseDown={(e: any)=>{e.preventDefault();selectStyleForLine(oi,li,s.style_code)}} style={{padding:'5px 10px',cursor:'pointer',borderBottom:'1px solid #f5f5f5',fontSize:12,display:'flex',justifyContent:'space-between'}}><b>{s.style_code}</b><span style={{color:'#888',fontSize:10}}>{s.total_boxes}bx</span></div>))}</div>)}
+                      </td>
+                      <td style={{padding:4}}>{o.opts[li]?.colours?.length>0?<select style={I} value={Li.colour} onChange={(e: any)=>updLine(oi,li,'colour',e.target.value)}><option value="">Pick...</option>{o.opts[li].colours.map((c: string)=><option key={c}>{c}</option>)}</select>:<input style={I} value={Li.colour} onChange={(e: any)=>updLine(oi,li,'colour',e.target.value)} placeholder="colour"/>}</td>
+                      <td style={{padding:4}}>{o.opts[li]?.shop_locations?.length>0?<select style={{...I,fontSize:11}} value={Li.from} onChange={(e: any)=>updLine(oi,li,'from',e.target.value)}><option value="">-</option>{o.opts[li].shop_locations.map((l: string)=><option key={l}>{l}</option>)}</select>:<input style={{...I,fontSize:11}} value={Li.from} onChange={(e: any)=>updLine(oi,li,'from',e.target.value)} placeholder="loc"/>}</td>
+                      <td style={{padding:4}}><input type="number" style={{...I,textAlign:'center',fontWeight:700,fontSize:14}} value={Li.boxes} onChange={(e: any)=>updLine(oi,li,'boxes',e.target.value)}/></td>
+                      <td style={{padding:4}}><input type="number" step="0.5" style={I} value={Li.price} onChange={(e: any)=>updLine(oi,li,'price',e.target.value)} placeholder="0.00"/></td>
+                      <td style={{padding:4}}><select style={{...I,fontSize:11}} value={Li.vat} onChange={(e: any)=>updLine(oi,li,'vat',e.target.value)}><option value="0">0%</option><option value="20">20%</option></select></td>
+                      <td style={{padding:4}}><button onClick={()=>rmLine(oi,li)} style={{background:'none',border:'none',color:'#ccc',cursor:'pointer',fontSize:14}}>×</button></td>
+                    </tr>))}
+                  </tbody></table>
+                  {o.lines.some((l: Line)=>l.price&&l.boxes)&&(<div style={{marginTop:8,padding:'10px 12px',background:'#fafafa',borderRadius:6,fontSize:12,color:'#555'}}>
+                    <div style={{display:'flex',gap:24}}><span>Subtotal: <b>£{totals.sub.toFixed(2)}</b></span><span>VAT: <b>£{totals.vatTotal.toFixed(2)}</b></span><span style={{fontWeight:700,color:'#111',fontSize:14}}>Total: £{totals.total.toFixed(2)}</span></div>
+                  </div>)}
+                  <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
+                    <button onClick={()=>addLine(oi)} style={{color:'white',background:'#333',border:'none',padding:'7px 14px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:11}}>+ Line</button>
+                    <button onClick={()=>submitOrder(oi)} disabled={o.busy} style={{color:'white',background:o.busy?'#999':'#e2725b',border:'none',padding:'9px 24px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:700}}>{o.busy?'Processing...':'Submit Order'}</button>
+                    <div style={{marginLeft:'auto',fontSize:12,color:'#888'}}>{o.lines.filter((l: Line)=>l.style).length}L | {o.lines.reduce((s: number,l: Line)=>s+(parseInt(l.boxes)||0),0)}bx</div>
+                  </div>
+                </div>)}
               </div>
             )})}
           </div>
@@ -465,7 +370,7 @@ export default function App() {
         const isExp=expandedLog===i;const isEdit=editingLog&&editingLog._idx===i
         if(isEdit){const e=editingLog;return(<tr key={i} style={{background:'#fffde7',borderBottom:'2px solid #fbc02d'}}><td style={{padding:5,fontSize:9}}>{fmtDateTime(l.created_at)}</td><td style={{padding:5,fontWeight:700}}>{l.order_num}</td><td style={{padding:5}}><select style={{...I,width:80,fontSize:10,padding:2}} value={e.type||''} onChange={(ev: any)=>setEditingLog({...e,type:ev.target.value})}>{['OUT','IN','TBC','CANCELLED','MOVE_S2W','MOVE_W2S'].map(t=><option key={t}>{t}</option>)}</select></td><td style={{padding:5}}><input style={{...I,width:70,fontSize:10,padding:2}} value={e.style_code||''} onChange={(ev: any)=>setEditingLog({...e,style_code:ev.target.value})}/></td><td style={{padding:5}}><input style={{...I,width:70,fontSize:10,padding:2}} value={e.colour||''} onChange={(ev: any)=>setEditingLog({...e,colour:ev.target.value})}/></td><td style={{padding:5}}>{l.price_pair}</td><td style={{padding:5}}><input type="number" style={{...I,width:45,fontSize:10,padding:2}} value={e.qty||''} onChange={(ev: any)=>setEditingLog({...e,qty:parseInt(ev.target.value)||0})}/></td><td style={{padding:5}}>{l.from_loc}</td><td style={{padding:5}}><input style={{...I,width:80,fontSize:10,padding:2}} value={e.customer||''} onChange={(ev: any)=>setEditingLog({...e,customer:ev.target.value})}/></td><td style={{padding:5}}><select style={{...I,width:105,fontSize:10,padding:2}} value={e.payment||''} onChange={(ev: any)=>setEditingLog({...e,payment:ev.target.value})}>{['Paid','Paid (Cash)','Paid (Card)','Paid (Bank)','Unpaid','Unpaid (Cash)','Unpaid (Card)','Partial','Mixed','TBC','N/A'].map(p=><option key={p}>{p}</option>)}</select></td><td style={{padding:5}}><input style={{...I,width:150,fontSize:10,padding:2}} value={e.notes||''} onChange={(ev: any)=>setEditingLog({...e,notes:ev.target.value})}/></td><td style={{padding:5,whiteSpace:'nowrap'}}><button onClick={()=>saveLogEdit(editingLog)} style={{background:'#2e7d32',color:'white',border:'none',padding:'3px 8px',borderRadius:3,cursor:'pointer',fontSize:9,fontWeight:600,marginRight:2}}>Save</button><button onClick={()=>setEditingLog(null)} style={{background:'#777',color:'white',border:'none',padding:'3px 8px',borderRadius:3,cursor:'pointer',fontSize:9}}>X</button></td></tr>)}
         return(<><tr key={i} style={{background:logRowBg(l.type),borderBottom:isExp?'none':'1px solid rgba(0,0,0,0.05)',textDecoration:l.type==='CANCELLED'?'line-through':'none',cursor:'pointer'}} onClick={()=>setExpandedLog(isExp?null:i)}><td style={{padding:5,fontSize:9,whiteSpace:'nowrap'}}>{fmtDateTime(l.created_at)}</td><td style={{padding:5,fontWeight:700,color:'#bf360c'}}>{l.order_num}</td><td style={{padding:5}}><span style={{fontSize:9,padding:'2px 6px',borderRadius:3,fontWeight:700,background:typeBg(l.type),color:'white'}}>{l.type}</span></td><td style={{padding:5,fontWeight:600}}>{l.style_code}</td><td style={{padding:5}}>{l.colour}</td><td style={{padding:5}}>{l.price_pair}</td><td style={{padding:5,fontWeight:700,color:(l.qty||0)<0?'#c62828':'#2e7d32'}}>{l.qty}</td><td style={{padding:5}}>{l.from_loc}</td><td style={{padding:5,fontWeight:600,cursor:'pointer',color:'#1565c0'}} onClick={(e: any)=>{e.stopPropagation();l.customer&&openProfile(l.customer)}}>{l.customer}</td><td style={{padding:5}}>{l.payment&&<span style={{fontSize:9,padding:'2px 6px',borderRadius:3,fontWeight:700,background:payBg(l.payment),color:'white'}}>{l.payment}</span>}</td><td style={{padding:5,fontSize:9,color:'#666',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={l.notes||''}>{l.notes}</td><td style={{padding:5,whiteSpace:'nowrap'}} onClick={(e: any)=>e.stopPropagation()}><button onClick={()=>setEditingLog({...l,_idx:i})} style={{background:'#1565c0',color:'white',border:'none',padding:'2px 5px',borderRadius:3,cursor:'pointer',fontSize:8,fontWeight:600,marginRight:2}}>Edit</button>{l.type!=='CANCELLED'&&<button onClick={()=>cancelLogEntry(l)} style={{background:'#c62828',color:'white',border:'none',padding:'2px 5px',borderRadius:3,cursor:'pointer',fontSize:8,fontWeight:600}}>Cancel</button>}</td></tr>
-        {isExp&&<tr key={i+'exp'}><td colSpan={12} style={{padding:0}}><div style={{background:'#fafafa',padding:16,borderBottom:'2px solid #e0e0e0'}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12,fontSize:12,marginBottom:8}}><div><span style={{color:'#888'}}>Order:</span> <b>#{l.order_num}</b></div><div><span style={{color:'#888'}}>Customer:</span> <b>{l.customer}</b></div><div><span style={{color:'#888'}}>Payment:</span> <b>{l.payment}</b></div><div><span style={{color:'#888'}}>Date:</span> <b>{fmtDateTime(l.created_at)}</b></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr',gap:12,fontSize:12,marginBottom:8}}><div><span style={{color:'#888'}}>Style:</span> <b>{l.style_code}</b></div><div><span style={{color:'#888'}}>Colour:</span> <b>{l.colour}</b></div><div><span style={{color:'#888'}}>Qty:</span> <b>{l.qty}</b></div><div><span style={{color:'#888'}}>From:</span> <b>{l.from_loc}</b></div><div><span style={{color:'#888'}}>Price:</span> <b>{l.price_pair}</b></div></div><div style={{fontSize:12,marginBottom:8}}><span style={{color:'#888'}}>Before:</span> {l.before_qty} → <span style={{color:'#888'}}>After:</span> {l.after_qty}</div><div style={{fontSize:12,background:'white',padding:10,borderRadius:6,border:'1px solid #eee'}}><span style={{color:'#888'}}>Notes:</span> {l.notes||'—'}</div><div style={{marginTop:10,display:'flex',gap:6}}><button onClick={()=>setEditingLog({...l,_idx:i})} style={{background:'#1565c0',color:'white',border:'none',padding:'6px 14px',borderRadius:4,cursor:'pointer',fontSize:11,fontWeight:600}}>Edit</button>{l.type!=='CANCELLED'&&<button onClick={()=>cancelLogEntry(l)} style={{background:'#c62828',color:'white',border:'none',padding:'6px 14px',borderRadius:4,cursor:'pointer',fontSize:11,fontWeight:600}}>Cancel & Restore</button>}</div></div></td></tr>}</>)
+        {isExp&&<tr key={i+'e'}><td colSpan={12} style={{padding:0}}><div style={{background:'#fafafa',padding:16,borderBottom:'2px solid #e0e0e0'}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12,fontSize:12,marginBottom:8}}><div><span style={{color:'#888'}}>Order:</span> <b>#{l.order_num}</b></div><div><span style={{color:'#888'}}>Customer:</span> <b>{l.customer}</b></div><div><span style={{color:'#888'}}>Payment:</span> <b>{l.payment}</b></div><div><span style={{color:'#888'}}>Date:</span> <b>{fmtDateTime(l.created_at)}</b></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr',gap:12,fontSize:12,marginBottom:8}}><div><span style={{color:'#888'}}>Style:</span> <b>{l.style_code}</b></div><div><span style={{color:'#888'}}>Colour:</span> <b>{l.colour}</b></div><div><span style={{color:'#888'}}>Qty:</span> <b>{l.qty}</b></div><div><span style={{color:'#888'}}>From:</span> <b>{l.from_loc}</b></div><div><span style={{color:'#888'}}>Price:</span> <b>{l.price_pair}</b></div></div><div style={{fontSize:12,marginBottom:8}}><span style={{color:'#888'}}>Before:</span> {l.before_qty} → <span style={{color:'#888'}}>After:</span> {l.after_qty}</div><div style={{fontSize:12,background:'white',padding:10,borderRadius:6,border:'1px solid #eee',whiteSpace:'pre-wrap',wordBreak:'break-word'}}><span style={{color:'#888'}}>Notes:</span> {l.notes||'—'}</div><div style={{marginTop:10,display:'flex',gap:6}}><button onClick={()=>setEditingLog({...l,_idx:i})} style={{background:'#1565c0',color:'white',border:'none',padding:'6px 14px',borderRadius:4,cursor:'pointer',fontSize:11,fontWeight:600}}>Edit</button>{l.type!=='CANCELLED'&&<button onClick={()=>cancelLogEntry(l)} style={{background:'#c62828',color:'white',border:'none',padding:'6px 14px',borderRadius:4,cursor:'pointer',fontSize:11,fontWeight:600}}>Cancel & Restore</button>}</div></div></td></tr>}</>)
       })}</tbody></table></div><div style={{padding:'8px 14px',borderTop:'1px solid #eee',fontSize:11,color:'#888'}}>{filteredLogs.length} entries</div></div></div>)}
 
       {/* MASTER */}
@@ -479,9 +384,9 @@ export default function App() {
         <div style={{display:'flex',gap:0,marginBottom:16,borderBottom:'2px solid #eee'}}>{['overview','notes','followups','orders'].map(t=>(<button key={t} onClick={()=>setCustProfileTab(t)} style={{background:'none',border:'none',borderBottom:custProfileTab===t?'2px solid #111':'2px solid transparent',padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:custProfileTab===t?700:400,color:custProfileTab===t?'#111':'#888',marginBottom:-2}}>{t==='overview'?'Overview':t==='notes'?'Notes ('+custNotes.length+')':t==='followups'?'Follow-ups ('+custFollowups.length+')':'Orders ('+custOrders.length+')'}</button>))}</div>
         {custProfileTab==='overview'&&(<div style={{background:'white',borderRadius:8,border:'1px solid #e0e0e0'}}>{[...custNotes.map((n: any)=>({...n,_type:'note',_date:n.created_at})),...custFollowups.map((f: any)=>({...f,_type:'followup',_date:f.created_at})),...custOrders.map((o: any)=>({...o,_type:'order',_date:o.created_at}))].sort((a: any,b: any)=>new Date(b._date).getTime()-new Date(a._date).getTime()).slice(0,30).map((item: any,i: number)=>(<div key={i} style={{padding:'12px 16px',borderBottom:'1px solid #f0f0f0',display:'flex',gap:12}}><div style={{width:70,fontSize:10,color:'#888',textAlign:'right',paddingTop:2}}>{fmtDateTime(item._date)}</div><div style={{width:55}}><span style={{fontSize:9,padding:'2px 8px',borderRadius:4,fontWeight:600,background:item._type==='note'?'#e3f2fd':item._type==='followup'?'#fff3e0':'#e8f5e9',color:item._type==='note'?'#1565c0':item._type==='followup'?'#e65100':'#2e7d32'}}>{item._type==='note'?'Note':item._type==='followup'?'Task':'Order'}</span></div><div style={{flex:1,fontSize:13}}>{item._type==='note'&&item.note}{item._type==='followup'&&<span><b>{item.title}</b>{item.details&&' — '+item.details}</span>}{item._type==='order'&&<span><b>#{item.order_num}</b> {item.style_code} {item.colour} | {item.qty}bx | {item.payment}</span>}</div></div>))}{custNotes.length===0&&custFollowups.length===0&&custOrders.length===0&&<div style={{padding:30,textAlign:'center',color:'#ccc'}}>No activity</div>}</div>)}
         {custProfileTab==='notes'&&(<div><div style={{display:'flex',gap:8,marginBottom:16}}><input style={{...I,flex:1}} value={newNote} onChange={(e: any)=>setNewNote(e.target.value)} placeholder="Add a note..." onKeyDown={(e: any)=>{if(e.key==='Enter')addNote()}}/><button onClick={addNote} style={{background:'#111',color:'white',border:'none',padding:'8px 18px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:12}}>Add</button></div><div style={{background:'white',borderRadius:8,border:'1px solid #e0e0e0'}}>{custNotes.map((n: any,i: number)=>(<div key={i} style={{padding:'14px 18px',borderBottom:'1px solid #f0f0f0',display:'flex',gap:16}}><div style={{fontSize:11,color:'#888',whiteSpace:'nowrap',minWidth:100,textAlign:'right'}}>{fmtDateTime(n.created_at)}</div><div style={{flex:1,fontSize:13}}>{n.note}</div><button onClick={()=>deleteNote(n.id)} style={{background:'none',border:'none',color:'#ccc',cursor:'pointer'}}>×</button></div>))}{custNotes.length===0&&<div style={{padding:30,textAlign:'center',color:'#ccc'}}>No notes</div>}</div></div>)}
-        {custProfileTab==='followups'&&(<div>{!showAddFollowup?<button onClick={()=>setShowAddFollowup(true)} style={{background:'#111',color:'white',border:'none',padding:'8px 18px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:12,marginBottom:16}}>Add Follow-up</button>:(<div style={{background:'#fffde7',borderRadius:8,padding:16,marginBottom:16,border:'2px solid #fbc02d'}}><div style={{display:'grid',gridTemplateColumns:'1fr 120px',gap:8,marginBottom:8}}><div><label style={Lbl}>Summary</label><input style={I} value={newFollowup.title} onChange={(e: any)=>setNewFollowup({...newFollowup,title:e.target.value})} placeholder="e.g. Ring to follow up"/></div><div><label style={Lbl}>Priority</label><select style={I} value={newFollowup.priority} onChange={(e: any)=>setNewFollowup({...newFollowup,priority:e.target.value})}><option>Normal</option><option>High</option><option>Low</option></select></div></div><div style={{display:'grid',gridTemplateColumns:'150px 150px 1fr',gap:8,marginBottom:8}}><div><label style={Lbl}>Due Date</label><input type="date" style={I} value={newFollowup.due_date} onChange={(e: any)=>setNewFollowup({...newFollowup,due_date:e.target.value})}/></div><div><label style={Lbl}>Category</label><select style={I} value={newFollowup.category} onChange={(e: any)=>setNewFollowup({...newFollowup,category:e.target.value})}><option>Phone Call</option><option>Email</option><option>Visit</option><option>Other</option></select></div><div><label style={Lbl}>Details</label><input style={I} value={newFollowup.details} onChange={(e: any)=>setNewFollowup({...newFollowup,details:e.target.value})}/></div></div><div style={{display:'flex',gap:8}}><button onClick={addFollowup} style={{background:'#2e7d32',color:'white',border:'none',padding:'8px 16px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:12}}>Save</button><button onClick={()=>setShowAddFollowup(false)} style={{background:'#777',color:'white',border:'none',padding:'8px 16px',borderRadius:6,cursor:'pointer',fontSize:12}}>Cancel</button></div></div>)}<div style={{background:'white',borderRadius:8,border:'1px solid #e0e0e0'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{background:'#f5f5f5'}}><th style={{padding:'8px 12px',textAlign:'left',fontWeight:600,color:'#555'}}>Task</th><th style={{padding:'8px 12px',textAlign:'left',fontWeight:600,color:'#555',width:80}}>Priority</th><th style={{padding:'8px 12px',textAlign:'left',fontWeight:600,color:'#555',width:100}}>Due</th><th style={{padding:'8px 12px',width:60}}>Done</th><th style={{width:30}}></th></tr></thead><tbody>{custFollowups.map((f: any,i: number)=>(<tr key={i} style={{borderBottom:'1px solid #f0f0f0',opacity:f.completed?0.5:1,background:!f.completed&&isDue(f.due_date)?'#fff8f8':'white'}}><td style={{padding:'10px 12px'}}><div style={{fontWeight:600}}>{f.title}</div>{f.details&&<div style={{fontSize:11,color:'#888'}}>{f.details}</div>}<div style={{fontSize:10,color:'#aaa'}}>{f.category}</div></td><td style={{padding:'10px 12px'}}><span style={{fontSize:10,padding:'2px 8px',borderRadius:4,fontWeight:600,background:f.priority==='High'?'#ffebee':'#fff3e0',color:f.priority==='High'?'#c62828':'#e65100'}}>{f.priority}</span></td><td style={{padding:'10px 12px',color:isDue(f.due_date)&&!f.completed?'#c62828':'#555',fontWeight:isDue(f.due_date)?700:400}}>{fmtDate(f.due_date)}</td><td style={{padding:'10px 12px'}}><input type="checkbox" checked={f.completed||false} onChange={()=>toggleFollowup(f.id,f.completed)} style={{cursor:'pointer',width:16,height:16}}/></td><td><button onClick={()=>deleteFollowup(f.id)} style={{background:'none',border:'none',color:'#ccc',cursor:'pointer'}}>×</button></td></tr>))}</tbody></table>{custFollowups.length===0&&<div style={{padding:30,textAlign:'center',color:'#ccc'}}>No follow-ups</div>}</div></div>)}
+        {custProfileTab==='followups'&&(<div>{!showAddFollowup?<button onClick={()=>setShowAddFollowup(true)} style={{background:'#111',color:'white',border:'none',padding:'8px 18px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:12,marginBottom:16}}>Add Follow-up</button>:(<div style={{background:'#fffde7',borderRadius:8,padding:16,marginBottom:16,border:'2px solid #fbc02d'}}><div style={{display:'grid',gridTemplateColumns:'1fr 120px',gap:8,marginBottom:8}}><div><label style={Lbl}>Summary</label><input style={I} value={newFollowup.title} onChange={(e: any)=>setNewFollowup({...newFollowup,title:e.target.value})}/></div><div><label style={Lbl}>Priority</label><select style={I} value={newFollowup.priority} onChange={(e: any)=>setNewFollowup({...newFollowup,priority:e.target.value})}><option>Normal</option><option>High</option><option>Low</option></select></div></div><div style={{display:'grid',gridTemplateColumns:'150px 150px 1fr',gap:8,marginBottom:8}}><div><label style={Lbl}>Due Date</label><input type="date" style={I} value={newFollowup.due_date} onChange={(e: any)=>setNewFollowup({...newFollowup,due_date:e.target.value})}/></div><div><label style={Lbl}>Category</label><select style={I} value={newFollowup.category} onChange={(e: any)=>setNewFollowup({...newFollowup,category:e.target.value})}><option>Phone Call</option><option>Email</option><option>Visit</option><option>Other</option></select></div><div><label style={Lbl}>Details</label><input style={I} value={newFollowup.details} onChange={(e: any)=>setNewFollowup({...newFollowup,details:e.target.value})}/></div></div><div style={{display:'flex',gap:8}}><button onClick={addFollowup} style={{background:'#2e7d32',color:'white',border:'none',padding:'8px 16px',borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:12}}>Save</button><button onClick={()=>setShowAddFollowup(false)} style={{background:'#777',color:'white',border:'none',padding:'8px 16px',borderRadius:6,cursor:'pointer',fontSize:12}}>Cancel</button></div></div>)}<div style={{background:'white',borderRadius:8,border:'1px solid #e0e0e0'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{background:'#f5f5f5'}}><th style={{padding:'8px 12px',textAlign:'left',fontWeight:600,color:'#555'}}>Task</th><th style={{padding:'8px 12px',textAlign:'left',fontWeight:600,color:'#555',width:80}}>Priority</th><th style={{padding:'8px 12px',textAlign:'left',fontWeight:600,color:'#555',width:100}}>Due</th><th style={{padding:'8px 12px',width:60}}>Done</th><th style={{width:30}}></th></tr></thead><tbody>{custFollowups.map((f: any,i: number)=>(<tr key={i} style={{borderBottom:'1px solid #f0f0f0',opacity:f.completed?0.5:1,background:!f.completed&&isDue(f.due_date)?'#fff8f8':'white'}}><td style={{padding:'10px 12px'}}><div style={{fontWeight:600}}>{f.title}</div>{f.details&&<div style={{fontSize:11,color:'#888'}}>{f.details}</div>}<div style={{fontSize:10,color:'#aaa'}}>{f.category}</div></td><td style={{padding:'10px 12px'}}><span style={{fontSize:10,padding:'2px 8px',borderRadius:4,fontWeight:600,background:f.priority==='High'?'#ffebee':'#fff3e0',color:f.priority==='High'?'#c62828':'#e65100'}}>{f.priority}</span></td><td style={{padding:'10px 12px',color:isDue(f.due_date)&&!f.completed?'#c62828':'#555',fontWeight:isDue(f.due_date)?700:400}}>{fmtDate(f.due_date)}</td><td style={{padding:'10px 12px'}}><input type="checkbox" checked={f.completed||false} onChange={()=>toggleFollowup(f.id,f.completed)} style={{cursor:'pointer',width:16,height:16}}/></td><td><button onClick={()=>deleteFollowup(f.id)} style={{background:'none',border:'none',color:'#ccc',cursor:'pointer'}}>×</button></td></tr>))}</tbody></table>{custFollowups.length===0&&<div style={{padding:30,textAlign:'center',color:'#ccc'}}>No follow-ups</div>}</div></div>)}
         {custProfileTab==='orders'&&(<div style={{background:'white',borderRadius:8,border:'1px solid #e0e0e0'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}><thead><tr style={{background:'#f5f5f5'}}>{['Date','#','Type','Style','Colour','Qty','Payment'].map(h=>(<th key={h} style={{padding:'8px 10px',fontWeight:600,textAlign:'left',color:'#555'}}>{h}</th>))}</tr></thead><tbody>{custOrders.map((o: any,i: number)=>(<tr key={i} style={{borderBottom:'1px solid #f0f0f0',background:logRowBg(o.type)}}><td style={{padding:'6px 10px',fontSize:10}}>{fmtDateTime(o.created_at)}</td><td style={{padding:'6px 10px',fontWeight:700,color:'#bf360c'}}>{o.order_num}</td><td style={{padding:'6px 10px'}}><span style={{fontSize:9,padding:'2px 6px',borderRadius:3,fontWeight:700,background:typeBg(o.type),color:'white'}}>{o.type}</span></td><td style={{padding:'6px 10px',fontWeight:600}}>{o.style_code}</td><td style={{padding:'6px 10px'}}>{o.colour}</td><td style={{padding:'6px 10px',fontWeight:700,color:(o.qty||0)<0?'#c62828':'#2e7d32'}}>{o.qty}</td><td style={{padding:'6px 10px'}}>{o.payment&&<span style={{fontSize:9,padding:'2px 6px',borderRadius:3,fontWeight:700,background:payBg(o.payment),color:'white'}}>{o.payment}</span>}</td></tr>))}</tbody></table>{custOrders.length===0&&<div style={{padding:30,textAlign:'center',color:'#ccc'}}>No orders</div>}</div>)}
-      </div><div><div style={{background:'white',borderRadius:8,padding:18,border:'1px solid #e0e0e0',marginBottom:12}}><h3 style={{fontSize:13,fontWeight:600,margin:'0 0 12px',color:'#333',textTransform:'uppercase'}}>Quick Info</h3><div style={{fontSize:13,marginBottom:8}}><span style={{color:'#888',display:'inline-block',width:80}}>Orders:</span> <b>{custOrders.length}</b></div><div style={{fontSize:13,marginBottom:8}}><span style={{color:'#888',display:'inline-block',width:80}}>Notes:</span> <b>{custNotes.length}</b></div><div style={{fontSize:13,marginBottom:8}}><span style={{color:'#888',display:'inline-block',width:80}}>Follow-ups:</span> <b>{custFollowups.filter((f: any)=>!f.completed).length} active</b></div>{custOrders.length>0&&<div style={{fontSize:13}}><span style={{color:'#888',display:'inline-block',width:80}}>Last Order:</span> <b>{fmtDate(custOrders[0]?.created_at)}</b></div>}</div><div style={{background:'white',borderRadius:8,padding:18,border:'1px solid #e0e0e0'}}><h3 style={{fontSize:13,fontWeight:600,margin:'0 0 12px',color:'#333',textTransform:'uppercase'}}>Recent</h3>{custNotes.slice(0,5).map((n: any,i: number)=>(<div key={i} style={{padding:'5px 0',borderBottom:'1px solid #f5f5f5',fontSize:11}}><div style={{color:'#888',fontSize:10}}>{fmtDate(n.created_at)}</div><div style={{color:'#333',marginTop:1}}>{n.note}</div></div>))}{custNotes.length===0&&<p style={{color:'#ccc',fontSize:11,textAlign:'center'}}>No notes</p>}</div></div></div></div>)}
+      </div><div><div style={{background:'white',borderRadius:8,padding:18,border:'1px solid #e0e0e0',marginBottom:12}}><h3 style={{fontSize:13,fontWeight:600,margin:'0 0 12px',color:'#333',textTransform:'uppercase'}}>Quick Info</h3><div style={{fontSize:13,marginBottom:8}}><span style={{color:'#888',display:'inline-block',width:80}}>Orders:</span> <b>{custOrders.length}</b></div><div style={{fontSize:13,marginBottom:8}}><span style={{color:'#888',display:'inline-block',width:80}}>Notes:</span> <b>{custNotes.length}</b></div><div style={{fontSize:13,marginBottom:8}}><span style={{color:'#888',display:'inline-block',width:80}}>Follow-ups:</span> <b>{custFollowups.filter((f: any)=>!f.completed).length}</b></div>{custOrders.length>0&&<div style={{fontSize:13}}><span style={{color:'#888',display:'inline-block',width:80}}>Last:</span> <b>{fmtDate(custOrders[0]?.created_at)}</b></div>}</div><div style={{background:'white',borderRadius:8,padding:18,border:'1px solid #e0e0e0'}}><h3 style={{fontSize:13,fontWeight:600,margin:'0 0 12px',color:'#333',textTransform:'uppercase'}}>Recent</h3>{custNotes.slice(0,5).map((n: any,i: number)=>(<div key={i} style={{padding:'5px 0',borderBottom:'1px solid #f5f5f5',fontSize:11}}><div style={{color:'#888',fontSize:10}}>{fmtDate(n.created_at)}</div><div style={{color:'#333',marginTop:1}}>{n.note}</div></div>))}{custNotes.length===0&&<p style={{color:'#ccc',fontSize:11,textAlign:'center'}}>No notes</p>}</div></div></div></div>)}
 
       </div>
     </div>
